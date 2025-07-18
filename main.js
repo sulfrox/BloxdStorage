@@ -11,14 +11,15 @@ const MAXIMUM_Y_DIRECTION_EXPANSION = 32;
 const MAXIMUM_Z_DIRECTION_EXPANSION = 65536;
 
 //game mechanical limits. You shouldn't change these values under any circumstances (unless bloxd.io updates its chest slot count)
-const MAX_SLOT_COUNT = 36-1;//need 1 slot for key storage
+const MAX_SLOT_COUNT = 36-1; //need 1 slot for key storage
+const MAX_DESCRIPTION_LENGTH = 476; //argument length limit for api.setStandardChestItemSlot
 
 //restricts how many lookups the database can perform before throwing all operations to the next tick
 //will be multiplied by the current number of players online
 //should be higher than MAXIMUM_Y_DIRECTION_EXPANSION, but lower than 276,
 //which is the experimentally determined value of allowed api.getStandardChestItemSlot() call
 //numbers per tick per player
-const DATABASE_LOOKUP_PER_TICK_LIMIT = MAXIMUM_Y_DIRECTION_EXPANSION;
+const DATABASE_LOOKUP_PER_TICK_LIMIT = MAXIMUM_Y_DIRECTION_EXPANSION+1;
 
 //item used for storage, preferably not stackable
 const STORAGE_ITEM = "Stick"
@@ -107,7 +108,7 @@ function vector_add(v1,v2) {
 let hash_table_tick=()=>{
     let iteration_count = 0;
     let iteration_limit = api.getNumPlayers()*DATABASE_LOOKUP_PER_TICK_LIMIT;
-    for(let node=IO_operation_list.Next();node && iteration_count<iteration_limit;node=node.Next()) {
+    main_loop:for(let node=IO_operation_list.Next();node && iteration_count<iteration_limit;node=node.Next()) {
         let {key,slot,value,callback} = node.val;
         if(!Number.isInteger(slot) || slot<0 || slot>MAX_SLOT_COUNT) {
             safeCall(callback,undefined,new Error("invalid slot number"));
@@ -120,53 +121,58 @@ let hash_table_tick=()=>{
         let hashed_key_x = raw_hash%MAXIMUM_X_DIRECTION_EXPANSION;
         let hashed_key_z = Math.floor(raw_hash/MAXIMUM_X_DIRECTION_EXPANSION)%MAXIMUM_Z_DIRECTION_EXPANSION;
         //look for the chest in the array of values corresponding to the hash
-        for(let i=0;i<MAXIMUM_Y_DIRECTION_EXPANSION && iteration_count<iteration_limit;i++) {
-            let position = vector_add(BASE_STORAGE_LOCATION,[hashed_key_x,i,hashed_key_z]);
-            let raw_data;
-            try {
-                raw_data = api.getStandardChestItems(position);
-                iteration_count+=1;
-            } catch {
-                //assumes chunk is unloaded
-                api.getBlock(position);
-                iteration_count+=2;
-                break;
-            }
-            //the 0th slot is used to mark they key
-            let real_slot = slot+1;
-            if(raw_data[0]?.attributes.customDescription===key) {
-                if(value===null) {
-                    let data = raw_data[real_slot]?.attributes?.customDescription;
-                    safeCall(callback,data,null);
-                    node.is_node_deleted=true;
-                    node.Delete();
-                } else {
-                    value=value+"";
-                    api.setStandardChestItemSlot(position,real_slot,STORAGE_ITEM,null,undefined,{customDescription:value});
+        try{
+            for(let i=0;i<MAXIMUM_Y_DIRECTION_EXPANSION && iteration_count<iteration_limit;i++) {
+                let position = vector_add(BASE_STORAGE_LOCATION,[hashed_key_x,i,hashed_key_z]);
+                let raw_data;
+                try {
+                    raw_data = api.getStandardChestItems(position);
                     iteration_count+=1;
-                    safeCall(callback,value,null);
-                    node.is_node_deleted=true;
-                    node.Delete();
+                } catch {
+                    //assumes chunk is unloaded
+                    api.getBlock(position);
+                    iteration_count+=2;
+                    continue main_loop;
                 }
-                break;
-            } else if (raw_data[0]===null) {
-                if(value===null) {
-                    safeCall(callback,undefined,null);
-                    node.is_node_deleted=true;
-                    node.Delete();
-                } else {
-                    value=value+"";
-                    api.setBlock(position,"Chest");
-                    api.setStandardChestItemSlot(position,0,STORAGE_ITEM,null,undefined,{customDescription:key});
-                    api.setStandardChestItemSlot(position,real_slot,STORAGE_ITEM,null,undefined,{customDescription:value});
-                    iteration_count+=3;
-                    safeCall(callback,value,null);
-                    node.is_node_deleted=true;
-                    node.Delete();
+                //the 0th slot is used to mark they key
+                let real_slot = slot+1;
+                if(raw_data[0]?.attributes.customDescription===key) {
+                    if(value===null) {
+                        let data = raw_data[real_slot]?.attributes?.customDescription;
+                        safeCall(callback,data,null);
+                        node.is_node_deleted=true;
+                        node.Delete();
+                    } else {
+                        api.setStandardChestItemSlot(position,real_slot,STORAGE_ITEM,null,undefined,{customDescription:value});
+                        iteration_count+=1;
+                        safeCall(callback,value,null);
+                        node.is_node_deleted=true;
+                        node.Delete();
+                    }
+                    continue main_loop;
+                } else if (raw_data[0]===null) {
+                    if(value===null) {
+                        safeCall(callback,undefined,null);
+                        node.is_node_deleted=true;
+                        node.Delete();
+                    } else {
+                        api.setBlock(position,"Chest");
+                        api.setStandardChestItemSlot(position,0,STORAGE_ITEM,null,undefined,{customDescription:key});
+                        api.setStandardChestItemSlot(position,real_slot,STORAGE_ITEM,null,undefined,{customDescription:value});
+                        iteration_count+=3;
+                        safeCall(callback,value,null);
+                        node.is_node_deleted=true;
+                        node.Delete();
+                    }
+                    continue main_loop;
                 }
-                break;
             }
+            safeCall(callback,undefined,new Error("out of space for hash collision"));
+        }catch (err) {
+            safeCall(callback,undefined,new Error("unexpected failure: "+err));
         }
+        node.is_node_deleted=true;
+        node.Delete();
     }
 }
 
@@ -193,6 +199,11 @@ globalThis.BloxdStorage = {
         IO_operation_list.InsertAfter({key,slot,callback,value:null});
     },
     Set:function(key,value,callback,slot=0) {
+        value=value+"";
+        if(value.length>MAX_DESCRIPTION_LENGTH) {
+            safeCall(callback,undefined,new Error("value string too long"));
+            return;
+        }
         IO_operation_list.InsertAfter({key,slot,callback,value});
     }
 }
