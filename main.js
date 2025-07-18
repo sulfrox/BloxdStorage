@@ -126,7 +126,10 @@ let hash_table_tick=()=>{
                     //assumes chunk is unloaded
                     api.getBlock(position);
                     iteration_count+=2;
-                    continue main_loop;
+                    //in-game testing shows that loading more than 1 chunk per tick
+                    //can trigger the chunk loading rate limiter
+                    //we don't wanna take any risk
+                    break main_loop;
                 }
                 //the 0th slot is used to mark they key
                 let real_slot = slot+1;
@@ -190,6 +193,7 @@ function safeCall(func,...param) {
 
 globalThis.BloxdStorage = {
     Get:function(key,callback,slot=0) {
+        key=key+"";
         if(!Number.isInteger(slot) || slot<0 || slot>=MAX_SLOT_COUNT) {
             safeCall(callback,undefined,new Error("invalid slot number"));
             return ;
@@ -197,9 +201,14 @@ globalThis.BloxdStorage = {
         IO_operation_list.InsertAfter({key,slot,callback,value:null});
     },
     Set:function(key,value,callback,slot=0) {
+        key=key+"";
         value=value+"";
         if(value.length>MAX_DESCRIPTION_LENGTH) {
             safeCall(callback,undefined,new Error("value string too long"));
+            return;
+        }
+        if(key.length>MAX_DESCRIPTION_LENGTH) {
+            safeCall(callback,undefined,new Error("key string too long"));
             return;
         }
         if(!Number.isInteger(slot) || slot<0 || slot>=MAX_SLOT_COUNT) {
