@@ -110,12 +110,6 @@ let hash_table_tick=()=>{
     let iteration_limit = api.getNumPlayers()*DATABASE_LOOKUP_PER_TICK_LIMIT;
     main_loop:for(let node=IO_operation_list.Next();node && iteration_count<iteration_limit;node=node.Next()) {
         let {key,slot,value,callback} = node.val;
-        if(!Number.isInteger(slot) || slot<0 || slot>MAX_SLOT_COUNT) {
-            safeCall(callback,undefined,new Error("invalid slot number"));
-            node.is_node_deleted=true;
-            node.Delete();
-            continue;
-        }
         let raw_hash = FastHash(key);
         //find the hashed
         let hashed_key_x = raw_hash%MAXIMUM_X_DIRECTION_EXPANSION;
@@ -196,6 +190,10 @@ function safeCall(func,...param) {
 
 globalThis.BloxdStorage = {
     Get:function(key,callback,slot=0) {
+        if(!Number.isInteger(slot) || slot<0 || slot>=MAX_SLOT_COUNT) {
+            safeCall(callback,undefined,new Error("invalid slot number"));
+            return ;
+        }
         IO_operation_list.InsertAfter({key,slot,callback,value:null});
     },
     Set:function(key,value,callback,slot=0) {
@@ -203,6 +201,10 @@ globalThis.BloxdStorage = {
         if(value.length>MAX_DESCRIPTION_LENGTH) {
             safeCall(callback,undefined,new Error("value string too long"));
             return;
+        }
+        if(!Number.isInteger(slot) || slot<0 || slot>=MAX_SLOT_COUNT) {
+            safeCall(callback,undefined,new Error("invalid slot number"));
+            return ;
         }
         IO_operation_list.InsertAfter({key,slot,callback,value});
     }
