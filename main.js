@@ -24,60 +24,50 @@ const DATABASE_LOOKUP_PER_TICK_LIMIT = MAXIMUM_Y_DIRECTION_EXPANSION+1;
 //item used for storage, preferably not stackable
 const STORAGE_ITEM = "Stick"
 
-//linked list for pending read/write operations
-//assuming racing conditions don't exist... use a lock if ur use case depends on it
-/*
-the IO operation objects should have the following structure:
-{
-    key:string
-    slot:number
-    value:string|null, new value/indicating this is a read operation if null
-    callback:function
-}
-*/
-
 //interruption-safe linked list with function APIs
 class LinkedList {
     //whether this node should have been deleted
     //has to be modifiable by an external measure without function calls
     is_node_deleted=false;
     //whether this is the first node
-    #isFirst
+    isFirst
     //last/next node
-    #last;#next;
+    last;next;
     //value stored
     val;
     InsertAfter(val) {
         let nextNode = new LinkedList(false);
         nextNode.val = val;
-        nextNode.#next = this.#next;
-        nextNode.#last = this;
-        this.#next = nextNode;
+        nextNode.next = this.next;
+        nextNode.last = this;
+        this.next.last = nextNode;
+        this.next = nextNode;
     }
     InsertBefore(val) {
-        let nextNode = new LinkedList(false);
-        nextNode.val = val;
-        nextNode.#last = this.#last;
-        nextNode.#next = this;
-        this.#last = nextNode;
+        let lastName = new LinkedList(false);
+        lastName.val = val;
+        lastName.last = this.last;
+        lastName.next = this;
+        this.last.next = lastName;
+        this.last = lastName;
     }
     Delete() {
         this.is_node_deleted=true;
-        this.#last.#next=this.#next;
-        this.#next.#last=this.#last;
+        this.last.next=this.next;
+        this.next.last=this.last;
     }
     Next() {
-        let nextNode = this.#next;
+        let nextNode = this.next;
         if(!nextNode)return undefined;
         if(nextNode.is_node_deleted) {
             nextNode.Delete();
             return nextNode.Next();
         }
-        if(nextNode.#isFirst)return undefined;
+        if(nextNode.isFirst)return undefined;
         return nextNode;
     }
     Last() {
-        let lastNode = this.#last;
+        let lastNode = this.last;
         if(!lastNode)return undefined;
         if(lastNode.is_node_deleted) {
             lastNode.Delete();
@@ -87,15 +77,29 @@ class LinkedList {
     }
     constructor(IsFirst=true) {
         if(IsFirst) {
-            this.#isFirst=true;
-            this.#last=this;
-            this.#next=this;
+            this.isFirst=true;
+            this.last=this;
+            this.next=this;
         }
     }
 }
 
-let IO_operation_list=new LinkedList();
 
+//linked list for pending read/write operations
+//assuming racing conditions don't exist... use a lock if ur use case depends on it
+/*
+the IO operation objects should have the following structure:
+{
+    key:string
+    slot:number
+    newValue:string|undefined, new value for write operation
+    operation:number, READ_OPERATION or WRITE_OPERATION
+    callback:function
+}
+*/
+let IO_operation_list=new LinkedList();
+const READ_OPERATION = -1;
+const WRITE_OPERATION = -2;
 
 function vector_add(v1,v2) {
 	return [
@@ -109,9 +113,9 @@ let hash_table_tick=()=>{
     let iteration_count = 0;
     let iteration_limit = api.getNumPlayers()*DATABASE_LOOKUP_PER_TICK_LIMIT;
     main_loop:for(let node=IO_operation_list.Next();node && iteration_count<iteration_limit;node=node.Next()) {
-        let {key,slot,value,callback} = node.val;
+        let {key,slot,newValue,callback,operation} = node.val;
         let raw_hash = FastHash(key);
-        //find the hashed
+        //find the hash value
         let hashed_key_x = raw_hash%MAXIMUM_X_DIRECTION_EXPANSION;
         let hashed_key_z = Math.floor(raw_hash/MAXIMUM_X_DIRECTION_EXPANSION)%MAXIMUM_Z_DIRECTION_EXPANSION;
         //look for the chest in the array of values corresponding to the hash
@@ -131,38 +135,23 @@ let hash_table_tick=()=>{
                     //we don't wanna take any risk
                     break main_loop;
                 }
-                //the 0th slot is used to mark they key
+                //the 0th slot is used to mark the key
                 let real_slot = slot+1;
-                if(raw_data[0]?.attributes.customDescription===key) {
-                    if(value===null) {
-                        let data = raw_data[real_slot]?.attributes?.customDescription;
-                        safeCall(callback,data,null);
-                        node.is_node_deleted=true;
-                        node.Delete();
-                    } else {
-                        api.setStandardChestItemSlot(position,real_slot,STORAGE_ITEM,null,undefined,{customDescription:value});
-                        iteration_count+=1;
-                        safeCall(callback,value,null);
-                        node.is_node_deleted=true;
-                        node.Delete();
-                    }
-                    continue main_loop;
-                } else if (raw_data[0]===null) {
-                    if(value===null) {
-                        safeCall(callback,undefined,null);
-                        node.is_node_deleted=true;
-                        node.Delete();
-                    } else {
-                        api.setBlock(position,"Chest");
-                        api.setStandardChestItemSlot(position,0,STORAGE_ITEM,null,undefined,{customDescription:key});
-                        api.setStandardChestItemSlot(position,real_slot,STORAGE_ITEM,null,undefined,{customDescription:value});
-                        iteration_count+=3;
-                        safeCall(callback,value,null);
-                        node.is_node_deleted=true;
-                        node.Delete();
-                    }
-                    continue main_loop;
+                let chest_key = raw_data[0]?.attributes?.customDescription;
+                if(chest_key!==key && chest_key!==undefined)continue;
+                if(chest_key===undefined && operation===WRITE_OPERATION) { //no data for this key has been stored before and we need to write - create new chest
+                    api.setBlock(position,"Chest");
+                    api.setStandardChestItemSlot(position,0,STORAGE_ITEM,null,undefined,{customDescription:key});
+                    iteration_count+=2;
                 }
+                if(operation===WRITE_OPERATION) {
+                    api.setStandardChestItemSlot(position,real_slot,STORAGE_ITEM,null,undefined,{customDescription:newValue});
+                    iteration_count++;
+                }
+                safeCall(callback,raw_data[real_slot]?.attributes?.customDescription,null);
+                node.is_node_deleted=true;
+                node.Delete();
+                continue main_loop;
             }
             safeCall(callback,undefined,new Error("out of space for hash collision"));
         }catch (err) {
@@ -198,7 +187,7 @@ globalThis.BloxdStorage = {
             safeCall(callback,undefined,new Error("invalid slot number"));
             return ;
         }
-        IO_operation_list.InsertAfter({key,slot,callback,value:null});
+        IO_operation_list.InsertAfter({key,slot,callback,operation:READ_OPERATION});
     },
     Set:function(key,value,callback,slot=0) {
         key=key+"";
@@ -215,7 +204,7 @@ globalThis.BloxdStorage = {
             safeCall(callback,undefined,new Error("invalid slot number"));
             return ;
         }
-        IO_operation_list.InsertAfter({key,slot,callback,value});
+        IO_operation_list.InsertAfter({key,slot,callback,newValue:value, operation:WRITE_OPERATION});
     }
 }
 Object.freeze(BloxdStorage);
