@@ -18,6 +18,10 @@ BloxdStorage.Set("key","value",
 );
 ```
 
+The first argument to `BloxdStorage.Set()` should be the key, the second argument should be the value that needs to be stored, and the third argument would be the callback function.
+
+Two arguments will be delivered to the callback function: the value stored for that key before this `Set()` call (will be `undefined` if the key doesn't exist, otherwise it would be a string), and any error that may have occured. If there is no error, the second argument will be `null` (**NOT `undefined`!**). If there is an error, the first argument should always be `undefined`.
+
 To read the value of a key, use `BloxdStorage.Get()` e.g.
 
 ```js
@@ -32,9 +36,11 @@ BloxdStorage.Get("key",
 )
 ```
 
+Similar to `BloxdStorage.Set()`, the first argument needs be the name of the key and the second argument needs be the callback function. The first argument delivered to the callback function would similarly be the value stored for that key (will be `undefined` if the key doesn't exist, otherwise it would be a string) and the second argument will be any error that has occured(`null` if there's no error). If there is an error, the first argument should always be `undefined`
+
 Note that both the key and the value will be converted to a string if they aren't already themselves.
 
-More advancedly, you can specify the chest item slot number 0-34 in both `Get()` and `Set()` operations
+More advancedly, you can specify the chest item slot number 0-34 in both `Get()` and `Set()` operations. However, this is **deprecated** and may not be supported in future updates.
 
 ```js
 
@@ -63,9 +69,9 @@ BloxdStorage.Get("key",
 
 ## How To Install
 
-Since BloxdStorage needs to deal with chunk loading issues, it has to be ran in the `tick()` callback. If you don't need tick functionality, just paste `direct_install.min.js` into ur world code and you wouldn't need to worry about anything else.
+If you don't need tick functionality, just paste the contents of `BloxdStorage.min.js` in the release files at the start of your world code and you will be good to go.
 
-If you need tick functionality, however, you need to paste `indirect_install.min.js` into ur world code, then call `hash_table_tick()` in ur `tick()` function. e.g.
+If you need to use the `tick` function, however, you need to call `hash_table_tick()` at the start of your tick function e.g.
 
 ```js
 function tick() {
