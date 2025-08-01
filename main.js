@@ -16,10 +16,8 @@ const MAX_DESCRIPTION_LENGTH = 476; //argument length limit for api.setStandardC
 
 //restricts how many lookups the database can perform before throwing all operations to the next tick
 //will be multiplied by the current number of players online
-//should be higher than MAXIMUM_Y_DIRECTION_EXPANSION, but lower than 276,
-//which is the experimentally determined value of allowed api.getStandardChestItemSlot() call
-//numbers per tick per player
-const DATABASE_LOOKUP_PER_TICK_LIMIT = MAXIMUM_Y_DIRECTION_EXPANSION+1;
+//should be higher than MAXIMUM_Y_DIRECTION_EXPANSION, but also as low as possible
+const DATABASE_LOOKUP_PER_TICK_LIMIT = MAXIMUM_Y_DIRECTION_EXPANSION;
 
 //item used for storage, preferably not stackable
 const STORAGE_ITEM = "Stick"
@@ -111,7 +109,7 @@ function vector_add(v1,v2) {
 
 let hash_table_tick=()=>{
     let iteration_count = 0;
-    let iteration_limit = api.getNumPlayers()*DATABASE_LOOKUP_PER_TICK_LIMIT;
+    let iteration_limit = DATABASE_LOOKUP_PER_TICK_LIMIT;
     main_loop:for(let node=IO_operation_list.Next();node && iteration_count<iteration_limit;node=node.Next()) {
         let {key,slot,newValue,callback,operation} = node.val;
         let raw_hash = FastHash(key);
